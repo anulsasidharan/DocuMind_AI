@@ -1,0 +1,1 @@
+"""Vertex / batch indexing pipelines."""

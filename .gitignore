@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+env/
+
+# Env & secrets
+.env
+.env.local
+*.pem
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Data artifacts (large)
+data/raw/**/*/
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Logs & coverage
+*.log
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+crash.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+GCP_deployment_guide.docx
+DocuMindAI_PRD.docx
