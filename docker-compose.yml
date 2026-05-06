@@ -1,52 +1,61 @@
 services:
+
+  # ── Vector database ──────────────────────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
     ports:
-      # If 6333 is already in use locally, host maps to 6335; API still uses qdrant:6333 inside Compose network
-      - "6335:6333"
-      - "6336:6334"
+      - "6335:6333"   # host 6335 → container 6333 (avoids clash with local Qdrant)
+      - "6336:6334"   # gRPC port (optional)
     volumes:
       - qdrant_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
 
+  # ── FastAPI backend ───────────────────────────────────────────────────────
   api:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      # Avoid conflict with local uvicorn; use http://localhost:8001
-      - "8001:8000"
+      - "8001:8000"   # http://localhost:8001
     env_file:
-      - .env
+      - .env          # loads OPENAI_API_KEY, GCP_PROJECT_ID, GCS_BUCKET_DOCS, etc.
     environment:
-      # Inside Compose, reach Qdrant by service name (overrides localhost in .env)
+      # Override .env values for the internal Docker network
       QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ""   # local Qdrant has no auth; cloud key from .env is not needed here
+      COLLECTION_NAME: ${COLLECTION_NAME:-docs-index}
     volumes:
-      # Mount local docs for indexing: docker compose exec api python scripts/index_docs.py /app/data/raw/your-folder
-      - ./data:/app/data:ro
-      # Cache reranker / sentence-transformers downloads between restarts
-      - hf_cache:/root/.cache
-      # Optional local GCP service account key for GCS upload endpoint
-      - ./gcp:/secrets:ro
+      - ./data:/app/data:ro          # mount local docs for CLI indexing
+      - hf_cache:/root/.cache        # cache HuggingFace models between restarts
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_healthy
 
+  # ── Streamlit web UI ─────────────────────────────────────────────────────
   webui:
     build:
       context: .
       dockerfile: Dockerfile
-    command: streamlit run ui/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+    command: >
+      streamlit run ui/streamlit_app.py
+        --server.address 0.0.0.0
+        --server.port 8501
+        --server.headless true
     ports:
-      - "8501:8501"
+      - "8501:8501"   # http://localhost:8501
     env_file:
       - .env
     environment:
+      # Streamlit runs server-side inside Docker; reach the API via internal network
       DOCUMIND_API_URL: http://api:8000
-    volumes:
-      # Optional local GCP service account key (if you later call GCS from UI code)
-      - ./gcp:/secrets:ro
     depends_on:
       - api
 
 volumes:
-  qdrant_storage:
-  hf_cache:
+  qdrant_storage:   # persistent Qdrant index (survives container restarts)
+  hf_cache:         # cached HuggingFace cross-encoder model

@@ -1,6 +1,8 @@
-"""RAG chain: retrieval, prompt, optional chat history, indexing."""
+"""RAG chain: retrieval, prompt, optional chat history, indexing, document listing."""
 
+import uuid as _uuid
 from operator import itemgetter
+from pathlib import Path
 from typing import List
 
 from langchain_core.documents import Document
@@ -14,7 +16,7 @@ from langchain_openai import ChatOpenAI
 
 from src.config import Settings, get_settings
 from src.llm import get_llm
-from src.retriever import get_vector_store
+from src.retriever import get_qdrant_client, get_vector_store
 from src.reranker import get_reranked_retriever
 from pipelines.components.chunker import get_text_splitter
 from pipelines.components.loader import load_documents
@@ -28,9 +30,10 @@ def build_rag_chain(
     *,
     llm: ChatOpenAI | None = None,
     settings: Settings | None = None,
+    doc_ids: list[str] | None = None,
 ):
     s = settings or get_settings()
-    retriever = get_reranked_retriever(s)
+    retriever = get_reranked_retriever(s, doc_ids=doc_ids)
     model = llm or get_llm(s)
 
     prompt = ChatPromptTemplate.from_messages(
@@ -72,53 +75,95 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
     return _store[session_id]
 
 
-_rag_with_history_default = None
-
-
-def get_rag_chain_with_history(settings: Settings | None = None):
-    """Returns chain with chat history; default instance is reused (loads reranker once)."""
-    global _rag_with_history_default
-    if settings is not None:
-        inner = build_rag_chain(settings=settings)
-        return RunnableWithMessageHistory(
-            inner,
-            get_session_history,
-            input_messages_key="question",
-            history_messages_key="chat_history",
-        )
-    if _rag_with_history_default is None:
-        s = get_settings()
-        inner = build_rag_chain(settings=s)
-        _rag_with_history_default = RunnableWithMessageHistory(
-            inner,
-            get_session_history,
-            input_messages_key="question",
-            history_messages_key="chat_history",
-        )
-    return _rag_with_history_default
+def clear_session_history(session_id: str) -> None:
+    """Remove conversation history for a session (call when switching doc scope)."""
+    _store.pop(session_id, None)
 
 
 def index_documents(
     file_paths: List[str],
     settings: Settings | None = None,
-) -> int:
-    """Load, chunk, embed, and upsert into Qdrant. Returns chunk count."""
+    doc_id: str | None = None,
+    source_name: str | None = None,
+) -> tuple[int, str]:
+    """Load, chunk, embed, and upsert into Qdrant.
+
+    Stamps every chunk with ``doc_id`` (and the human-readable ``source_name``
+    if supplied) so it can be retrieved in isolation later.
+    Returns (chunk_count, doc_id).
+    """
     s = settings or get_settings()
+    _doc_id = doc_id or str(_uuid.uuid4())
     all_docs = load_documents(file_paths)
     if not all_docs:
-        return 0
+        return 0, _doc_id
     splitter = get_text_splitter(s)
     chunks = splitter.split_documents(all_docs)
+    for chunk in chunks:
+        chunk.metadata["doc_id"] = _doc_id
+        if source_name:
+            chunk.metadata["source"] = source_name
     vs = get_vector_store(s)
     vs.add_documents(chunks)
-    return len(chunks)
+    return len(chunks), _doc_id
 
 
-def query(question: str, session_id: str = "default", settings: Settings | None = None) -> str:
-    """Run a RAG query and return the generated answer."""
+def get_indexed_documents(settings: Settings | None = None) -> list[dict]:
+    """Return [{doc_id, filename, chunk_count}] for every document in the collection."""
     s = settings or get_settings()
-    rag = get_rag_chain_with_history(s)
-    return rag.invoke(
+    client = get_qdrant_client(s)
+
+    # Collection might not exist yet on a fresh deployment — return empty list.
+    existing = {c.name for c in client.get_collections().collections}
+    if s.collection_name not in existing:
+        return []
+
+    # Scroll the whole collection and aggregate by doc_id.
+    docs: dict[str, dict] = {}
+    offset = None
+    while True:
+        result, next_offset = client.scroll(
+            collection_name=s.collection_name,
+            limit=200,
+            with_payload=True,
+            with_vectors=False,
+            offset=offset,
+        )
+        for point in result:
+            metadata = (point.payload or {}).get("metadata", {})
+            doc_id = metadata.get("doc_id")
+            if not doc_id:
+                continue
+            source = metadata.get("source", "")
+            filename = Path(source).name if source else "unknown"
+            entry = docs.setdefault(doc_id, {"doc_id": doc_id, "filename": filename, "chunk_count": 0})
+            entry["chunk_count"] += 1
+        if next_offset is None:
+            break
+        offset = next_offset
+
+    return sorted(docs.values(), key=lambda d: d["filename"])
+
+
+def query(
+    question: str,
+    session_id: str = "default",
+    settings: Settings | None = None,
+    doc_ids: list[str] | None = None,
+) -> str:
+    """Run a RAG query and return the generated answer.
+
+    Pass doc_ids to restrict context to specific indexed documents.
+    """
+    s = settings or get_settings()
+    chain = build_rag_chain(settings=s, doc_ids=doc_ids)
+    rag_with_history = RunnableWithMessageHistory(
+        chain,
+        get_session_history,
+        input_messages_key="question",
+        history_messages_key="chat_history",
+    )
+    return rag_with_history.invoke(
         {"question": question},
         config={"configurable": {"session_id": session_id}},
     )

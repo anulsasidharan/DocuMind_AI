@@ -52,11 +52,15 @@ def index_uploaded_bytes(
     file_bytes: bytes,
     filename: str,
     settings: Settings | None = None,
-) -> int:
-    """Persist uploaded bytes as temp file and index into vector store."""
+) -> tuple[int, str]:
+    """Persist uploaded bytes as a temp file and index into the vector store.
+
+    Returns (chunk_count, doc_id).  Every chunk is tagged with the doc_id so
+    it can be retrieved in isolation later.
+    """
     s = settings or get_settings()
     suffix = Path(filename).suffix or ".txt"
     with TemporaryDirectory() as tmp:
         local_path = Path(tmp) / f"upload{suffix}"
         local_path.write_bytes(file_bytes)
-        return index_documents([str(local_path)], settings=s)
+        return index_documents([str(local_path)], settings=s, source_name=filename)

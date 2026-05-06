@@ -17,7 +17,7 @@ def get_qdrant_client(settings: Settings | None = None) -> QdrantClient:
 
 
 def _ensure_collection(client: QdrantClient, settings: Settings) -> None:
-    """Create the collection with the correct vector schema if it doesn't exist."""
+    """Create the collection (if absent) and ensure the doc_id payload index exists."""
     existing = {c.name for c in client.get_collections().collections}
     if settings.collection_name not in existing:
         client.create_collection(
@@ -27,6 +27,18 @@ def _ensure_collection(client: QdrantClient, settings: Settings) -> None:
                 distance=Distance.COSINE,
             ),
         )
+    # Payload index on metadata.doc_id is required for filtered similarity search.
+    # The call is idempotent — safe to run even when the index already exists.
+    try:
+        from qdrant_client.models import PayloadSchemaType
+
+        client.create_payload_index(
+            collection_name=settings.collection_name,
+            field_name="metadata.doc_id",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+    except Exception:
+        pass
 
 
 def get_vector_store(settings: Settings | None = None) -> QdrantVectorStore:
@@ -41,10 +53,23 @@ def get_vector_store(settings: Settings | None = None) -> QdrantVectorStore:
     )
 
 
-def get_base_retriever(settings: Settings | None = None):
+def get_base_retriever(
+    settings: Settings | None = None,
+    doc_ids: list[str] | None = None,
+):
+    """Return a similarity retriever, optionally filtered to specific doc_ids."""
     s = settings or get_settings()
     vs = get_vector_store(s)
-    return vs.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": s.top_k},
-    )
+    search_kwargs: dict = {"k": s.top_k}
+    if doc_ids:
+        from qdrant_client.models import FieldCondition, Filter, MatchAny
+
+        search_kwargs["filter"] = Filter(
+            must=[
+                FieldCondition(
+                    key="metadata.doc_id",
+                    match=MatchAny(any=list(doc_ids)),
+                )
+            ]
+        )
+    return vs.as_retriever(search_type="similarity", search_kwargs=search_kwargs)
