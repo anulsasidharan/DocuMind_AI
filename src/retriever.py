@@ -2,6 +2,7 @@
 
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams
 
 from src.config import Settings, get_settings
 from src.embeddings import get_embeddings
@@ -15,15 +16,28 @@ def get_qdrant_client(settings: Settings | None = None) -> QdrantClient:
     return QdrantClient(**kwargs)
 
 
+def _ensure_collection(client: QdrantClient, settings: Settings) -> None:
+    """Create the collection with the correct vector schema if it doesn't exist."""
+    existing = {c.name for c in client.get_collections().collections}
+    if settings.collection_name not in existing:
+        client.create_collection(
+            collection_name=settings.collection_name,
+            vectors_config=VectorParams(
+                size=settings.embedding_dimensions,
+                distance=Distance.COSINE,
+            ),
+        )
+
+
 def get_vector_store(settings: Settings | None = None) -> QdrantVectorStore:
     s = settings or get_settings()
     client = get_qdrant_client(s)
+    _ensure_collection(client, s)
     embeddings = get_embeddings(s)
     return QdrantVectorStore(
         client=client,
         collection_name=s.collection_name,
         embedding=embeddings,
-        distance="COSINE",
     )
 
 

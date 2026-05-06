@@ -7,9 +7,9 @@ See **CLAUDE.md** for architecture notes and presentation checklist.
 ## Features
 
 - **RAG pipeline** — OpenAI embeddings, Qdrant vector store, Hugging Face cross-encoder rerank (configurable via `CROSS_ENCODER_MODEL`), GPT-4o answers with citations-focused system prompt  
-- **API** — FastAPI: `GET /health`, `POST /api/v1/query`  
-- **UI** — Streamlit front end calling the same pipeline  
-- **Indexing** — CLI scripts to load `.md`/`.txt` trees into Qdrant  
+- **API** — FastAPI: `GET /health`, `POST /api/v1/upload`, `POST /api/v1/query`, `POST /api/v1/upload-query`  
+- **Chat UI** — Streamlit with sidebar document upload and a persistent chat interface (conversation history per session)  
+- **Multi-format ingestion** — PDF, Markdown, TXT, HTML, DOCX, CSV, JSON; GCS upload optional (gracefully skipped when credentials are absent)  
 - **IaC** — Terraform stubs + **GCP_deployment_guide.docx** (Cloud Run, GCS, Secret Manager walkthrough)
 
 ## Tech stack
@@ -48,6 +48,41 @@ docker compose up -d
 
 Set `PYTHONPATH` to the repo root when running modules (PowerShell: `$env:PYTHONPATH="."`; bash: `export PYTHONPATH=.`).
 
+### Run with Docker (API + WebUI + Qdrant)
+
+From the repo root, with a valid **`.env`** (at least `OPENAI_API_KEY`; `QDRANT_URL` can stay `http://localhost:6333` for local non-Docker—the Compose file overrides it to **`http://qdrant:6333`** inside the network):
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+- **API:** [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs) (host port **8001** if 8000 is busy on your machine).
+- **Web UI (Streamlit):** [http://127.0.0.1:8501](http://127.0.0.1:8501)
+- **Qdrant dashboard (host):** [http://127.0.0.1:6335/dashboard](http://127.0.0.1:6335/dashboard) when using the default `docker-compose.yml` port mapping (**6335** avoids clashes with another Qdrant on 6333).
+
+The Streamlit UI includes:
+- **Ask Existing Index** (uses `POST /api/v1/query`)
+- **Upload -> GCS -> Index -> Ask** (uses `POST /api/v1/upload-query`)
+
+For upload-to-GCS flow, set these in `.env`:
+- `GCS_BUCKET_DOCS=<your-bucket>`
+- `GCP_PROJECT_ID=<your-project>`
+- `GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-sa.json` and place your key at `./gcp/gcp-sa.json` (for local Docker runs)
+
+Index docs **inside** the API container (example):
+
+```bash
+docker compose exec api python scripts/index_docs.py /app/data/raw/gcp-docs-samples
+```
+
+`./data` on your machine is mounted read-only at `/app/data` in the container.
+
+```bash
+docker compose logs -f api
+docker compose down
+```
+
 ### Fetch sample GCP-oriented docs (optional)
 
 ```bash
@@ -55,21 +90,45 @@ python scripts/download_gcp_docs.py
 python scripts/index_docs.py data/raw/gcp-docs-samples
 ```
 
-### Run the API
+### Run the API (PowerShell — recommended, handles env vars correctly)
 
-```bash
-uvicorn api.main:app --reload --port 8000
+```powershell
+.\start_api.ps1          # starts on port 8001 (avoids common port 8000 conflicts)
+.\start_api.ps1 -Port 8000   # or choose your own port
 ```
 
-Interactive docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+Interactive docs: [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs)
+
+Or manually (ensure `.env` is in your working directory):
+
+```bash
+uvicorn api.main:app --reload --port 8001
+```
 
 ### Run the web UI
 
-```bash
-streamlit run ui/streamlit_app.py
+```powershell
+.\start_ui.ps1                           # connects to API on port 8001
+.\start_ui.ps1 -ApiUrl http://127.0.0.1:8000   # custom API URL
 ```
 
-Opens at [http://localhost:8501](http://localhost:8501) by default.
+Or manually:
+
+```bash
+DOCUMIND_API_URL=http://127.0.0.1:8001 streamlit run ui/streamlit_app.py
+```
+
+Opens at [http://localhost:8501](http://localhost:8501).  
+Upload a document in the **sidebar**, then ask questions in the **chat interface**.
+
+### Workflow
+
+1. Start the API server (`start_api.ps1`)  
+2. Start the Streamlit UI (`start_ui.ps1` in a second terminal)  
+3. Open [http://localhost:8501](http://localhost:8501)  
+4. Upload a document (PDF/MD/TXT/HTML/DOCX/CSV/JSON) in the sidebar  
+5. Wait for "Indexed N chunks" confirmation  
+6. Ask questions in the chat — answers include citations from your documents
 
 ### Legacy one-liner script
 

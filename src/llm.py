@@ -11,4 +11,5 @@ def get_llm(settings: Settings | None = None) -> ChatOpenAI:
         model=s.llm_model,
         temperature=s.temperature,
         max_tokens=s.max_tokens,
+        api_key=s.openai_api_key or None,
     )

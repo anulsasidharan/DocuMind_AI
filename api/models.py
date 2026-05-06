@@ -13,6 +13,19 @@ class QueryResponse(BaseModel):
     session_id: str
 
 
+class UploadResponse(BaseModel):
+    filename: str
+    chunks_indexed: int
+    gcs_uri: str | None = None
+
+
+class UploadQueryResponse(BaseModel):
+    answer: str
+    session_id: str
+    gcs_uri: str | None = None
+    chunks_indexed: int
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     service: str = "documind-api"

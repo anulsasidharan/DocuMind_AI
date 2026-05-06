@@ -2,10 +2,51 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      # If 6333 is already in use locally, host maps to 6335; API still uses qdrant:6333 inside Compose network
+      - "6335:6333"
+      - "6336:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      # Avoid conflict with local uvicorn; use http://localhost:8001
+      - "8001:8000"
+    env_file:
+      - .env
+    environment:
+      # Inside Compose, reach Qdrant by service name (overrides localhost in .env)
+      QDRANT_URL: http://qdrant:6333
+    volumes:
+      # Mount local docs for indexing: docker compose exec api python scripts/index_docs.py /app/data/raw/your-folder
+      - ./data:/app/data:ro
+      # Cache reranker / sentence-transformers downloads between restarts
+      - hf_cache:/root/.cache
+      # Optional local GCP service account key for GCS upload endpoint
+      - ./gcp:/secrets:ro
+    depends_on:
+      - qdrant
+
+  webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: streamlit run ui/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      DOCUMIND_API_URL: http://api:8000
+    volumes:
+      # Optional local GCP service account key (if you later call GCS from UI code)
+      - ./gcp:/secrets:ro
+    depends_on:
+      - api
+
 volumes:
   qdrant_storage:
+  hf_cache:

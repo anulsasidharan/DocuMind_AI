@@ -17,7 +17,7 @@ from src.llm import get_llm
 from src.retriever import get_vector_store
 from src.reranker import get_reranked_retriever
 from pipelines.components.chunker import get_text_splitter
-from pipelines.components.loader import load_text_files
+from pipelines.components.loader import load_documents
 
 
 def format_docs(docs: List[Document]) -> str:
@@ -104,7 +104,7 @@ def index_documents(
 ) -> int:
     """Load, chunk, embed, and upsert into Qdrant. Returns chunk count."""
     s = settings or get_settings()
-    all_docs = load_text_files(file_paths)
+    all_docs = load_documents(file_paths)
     if not all_docs:
         return 0
     splitter = get_text_splitter(s)

@@ -1,5 +1,12 @@
 """FastAPI entrypoint."""
 
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Resolve .env from the project root regardless of the working directory.
+_env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(_env_path)
+
 from fastapi import FastAPI
 
 from api.routes import router

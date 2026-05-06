@@ -7,4 +7,4 @@ from src.config import Settings, get_settings
 
 def get_embeddings(settings: Settings | None = None) -> OpenAIEmbeddings:
     s = settings or get_settings()
-    return OpenAIEmbeddings(model=s.embedding_model)
+    return OpenAIEmbeddings(model=s.embedding_model, api_key=s.openai_api_key or None)
