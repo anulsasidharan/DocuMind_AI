@@ -7,8 +7,10 @@ project_id      = "documindai-495505"
 gcs_bucket_docs = "documindai-bucket"
 
 # Fill these in after: docker build → docker push → copy the full image URL
-api_image    = ""
-webui_image  = ""
+api_image   = "us-central1-docker.pkg.dev/documindai-495505/documind/api:latest"
+webui_image = "us-central1-docker.pkg.dev/documindai-495505/documind/api:latest"
+#api_image    = ""
+#webui_image  = ""
 
 # ── Optional (change only if needed) ─────────────────────────────────────────
 

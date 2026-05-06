@@ -36,7 +36,7 @@ resource "google_cloud_run_v2_service" "webui" {
 
       # Point the UI at the deployed API
       env {
-        name  = "API_BASE_URL"
+        name  = "DOCUMIND_API_URL"
         value = google_cloud_run_v2_service.api.uri
       }
       env {
